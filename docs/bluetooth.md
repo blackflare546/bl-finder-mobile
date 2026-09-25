@@ -34,7 +34,14 @@ For a cloud development APK, configure EAS and run `npx eas-cli@latest build --p
 2. Confirm the Bluetooth-off state and Turn on action.
 3. Start and stop a scan; confirm repeated advertisements update RSSI without duplicate rows.
 4. Select a device and move closer/farther, pausing between moves to confirm smoothing and trend tolerance.
+   Use **I changed direction** after rotating so the app can compare the next rolling RSSI window while retaining the strongest window from the current session.
 5. Power off or move the target away and confirm the temporary-loss state appears after about seven seconds.
 6. Leave the finder and confirm scanning stops.
 
 Some earphones and watches stop advertising while connected to another phone, asleep, or inside a closed charging case. RSSI is affected by walls, orientation, and the user's body, so it must not be presented as exact distance.
+
+## Relative direction guidance
+
+The finder compares two rolling windows of three smoothed RSSI readings. A change must exceed a 3 dBm deadband and persist for two evaluations before non-stable guidance is shown. The strongest rolling average is retained across direction checks, allowing the UI to indicate when the current direction matches the best signal observed in the session.
+
+This is only a hotter/colder comparison. It cannot determine an angle, compass bearing, exact direction, distance, or location. Reflections, walls, obstacles, body position, radio power, and device orientation can all change RSSI independently of distance.

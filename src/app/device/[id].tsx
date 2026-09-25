@@ -1,14 +1,52 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useBluetooth } from '@/services/bluetooth-provider';
-import { getSignalLevel, getSignalTrend, SIGNAL_LOSS_TIMEOUT_MS, smoothRssi } from '@/services/signal';
+import {
+  finderSignalReducer,
+  getSignalLevel,
+  INITIAL_FINDER_SIGNAL_STATE,
+  SIGNAL_LOSS_TIMEOUT_MS,
+} from '@/services/signal';
 
-const TREND_COPY = {
-  stronger: { arrow: '↑', label: 'Getting stronger', color: '#159A68' },
-  stable: { arrow: '→', label: 'Stable', color: '#5F727C' },
-  weaker: { arrow: '↓', label: 'Getting weaker', color: '#D25A44' },
+const DIRECTION_COPY = {
+  sampling: {
+    arrow: '…',
+    label: 'Checking direction',
+    body: 'Hold your position briefly while the signal settles.',
+    color: '#5F727C',
+  },
+  stronger: {
+    arrow: '↑',
+    label: 'Getting stronger',
+    body: 'Likely closer—keep moving slowly in this direction.',
+    color: '#159A68',
+  },
+  weaker: {
+    arrow: '↓',
+    label: 'Getting weaker',
+    body: 'Likely farther away. Move back or try another direction.',
+    color: '#D25A44',
+  },
+  stable: {
+    arrow: '→',
+    label: 'Stable',
+    body: 'No meaningful change yet. Move a few steps, then pause.',
+    color: '#5F727C',
+  },
+  tryAnother: {
+    arrow: '↩',
+    label: 'Try another direction',
+    body: 'This settled below the strongest signal seen this session.',
+    color: '#C47718',
+  },
+  strongest: {
+    arrow: '↑',
+    label: 'Signal strongest in this direction',
+    body: 'This is the strongest rolling signal seen this session.',
+    color: '#087D79',
+  },
 } as const;
 
 export default function DeviceFinderScreen() {
@@ -16,9 +54,11 @@ export default function DeviceFinderScreen() {
   const { devices, error, isScanning, startScan, stopScan } = useBluetooth();
   const device = devices.find((candidate) => candidate.id === id);
   const displayName = name || device?.name || 'Bluetooth device';
-  const [readings, setReadings] = useState<number[]>([]);
+  const [signalState, dispatchSignal] = useReducer(
+    finderSignalReducer,
+    INITIAL_FINDER_SIGNAL_STATE,
+  );
   const [clock, setClock] = useState(0);
-  const smoothedRef = useRef<number | null>(null);
 
   useEffect(() => {
     void startScan(false);
@@ -34,15 +74,12 @@ export default function DeviceFinderScreen() {
 
   useEffect(() => {
     if (!device) return;
-    const smoothed = smoothRssi(smoothedRef.current, device.rssi);
-    smoothedRef.current = smoothed;
-    setReadings((current) => [...current, smoothed].slice(-10));
-    setClock(Date.now());
+    dispatchSignal({ type: 'sample', rssi: device.rssi });
   }, [device?.lastSeen, device?.rssi, device]);
 
-  const smoothedRssi = readings.at(-1) ?? device?.rssi ?? null;
+  const smoothedRssi = signalState.smoothedRssi ?? device?.rssi ?? null;
   const signal = smoothedRssi === null ? null : getSignalLevel(smoothedRssi);
-  const trend = TREND_COPY[getSignalTrend(readings)];
+  const direction = DIRECTION_COPY[signalState.direction.status];
   const temporarilyLost = !device || clock - device.lastSeen > SIGNAL_LOSS_TIMEOUT_MS;
   const roundedRssi = smoothedRssi === null ? '—' : Math.round(smoothedRssi);
   const bars = useMemo(() => (signal ? Math.round(signal.progress * 5) : 0), [signal]);
@@ -99,20 +136,31 @@ export default function DeviceFinderScreen() {
           </View>
         </View>
 
-        <View style={styles.trendCard}>
-          <View style={[styles.trendIcon, { backgroundColor: `${trend.color}18` }]}>
-            <Text selectable style={[styles.trendArrow, { color: trend.color }]}>{trend.arrow}</Text>
+        <View style={styles.directionCard}>
+          <Text selectable style={styles.directionOverline}>RELATIVE DIRECTION • HOTTER / COLDER</Text>
+          <View style={styles.directionSummary}>
+            <View style={[styles.directionIcon, { backgroundColor: `${direction.color}18` }]}>
+              <Text selectable style={[styles.directionArrow, { color: direction.color }]}>{direction.arrow}</Text>
+            </View>
+            <View style={styles.directionCopy}>
+              <Text selectable style={styles.directionTitle}>{direction.label}</Text>
+              <Text selectable style={styles.directionBody}>{direction.body}</Text>
+            </View>
           </View>
-          <View style={styles.trendCopy}>
-            <Text selectable style={styles.trendTitle}>{trend.label}</Text>
-            <Text selectable style={styles.trendBody}>
-              {trend.label === 'Getting stronger'
-                ? 'Good—keep moving in this direction.'
-                : trend.label === 'Getting weaker'
-                  ? 'Try turning around or checking another direction.'
-                  : 'Move a few steps and wait for the signal to settle.'}
-            </Text>
-          </View>
+          <Pressable
+            accessibilityHint="Starts a fresh signal comparison while retaining the strongest signal"
+            disabled={!isScanning || temporarilyLost}
+            onPress={() => dispatchSignal({ type: 'changedDirection' })}
+            style={({ pressed }) => [
+              styles.directionButton,
+              (!isScanning || temporarilyLost) && styles.directionButtonDisabled,
+              pressed && styles.pressed,
+            ]}>
+            <Text style={styles.directionButtonText}>I changed direction ↩</Text>
+          </Pressable>
+          <Text selectable style={styles.directionFootnote}>
+            Compares recent signal strength only—not an angle, bearing, or exact location.
+          </Text>
         </View>
 
         <View style={styles.tipCard}>
@@ -162,12 +210,18 @@ const styles = StyleSheet.create({
   levelLabel: { fontSize: 23, fontWeight: '900', letterSpacing: -0.4, textAlign: 'center', width: '100%' },
   meter: { flexDirection: 'row', gap: 5, width: '84%' },
   meterSegment: { borderRadius: 4, flex: 1, height: 7 },
-  trendCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#DCE7EA', borderRadius: 20, borderWidth: 1, flexDirection: 'row', gap: 14, padding: 16 },
-  trendIcon: { alignItems: 'center', borderRadius: 17, height: 54, justifyContent: 'center', width: 54 },
-  trendArrow: { fontSize: 30, fontWeight: '800' },
-  trendCopy: { flex: 1, gap: 4 },
-  trendTitle: { color: '#071B2B', fontSize: 17, fontWeight: '800' },
-  trendBody: { color: '#60727E', fontSize: 13, lineHeight: 19 },
+  directionCard: { backgroundColor: '#FFFFFF', borderColor: '#DCE7EA', borderRadius: 20, borderWidth: 1, gap: 13, padding: 16 },
+  directionOverline: { color: '#60727E', fontSize: 10, fontWeight: '900', letterSpacing: 1.1 },
+  directionSummary: { alignItems: 'center', flexDirection: 'row', gap: 14 },
+  directionIcon: { alignItems: 'center', borderRadius: 17, height: 54, justifyContent: 'center', width: 54 },
+  directionArrow: { fontSize: 30, fontWeight: '800' },
+  directionCopy: { flex: 1, gap: 4 },
+  directionTitle: { color: '#071B2B', fontSize: 17, fontWeight: '800' },
+  directionBody: { color: '#60727E', fontSize: 13, lineHeight: 19 },
+  directionButton: { alignItems: 'center', backgroundColor: '#E4F4F3', borderRadius: 14, justifyContent: 'center', minHeight: 46, paddingHorizontal: 16 },
+  directionButtonDisabled: { opacity: 0.5 },
+  directionButtonText: { color: '#087D79', fontSize: 14, fontWeight: '800' },
+  directionFootnote: { color: '#73858D', fontSize: 11, lineHeight: 16, textAlign: 'center' },
   tipCard: { backgroundColor: '#E8F4F5', borderRadius: 20, gap: 11, padding: 17 },
   tipTitle: { color: '#164E58', fontSize: 15, fontWeight: '800', paddingBottom: 2 },
   tipRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },
