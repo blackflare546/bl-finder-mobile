@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Bluetooth Finder monochrome mark</title>
+  <desc id="desc">A pair of offset signal arcs orbiting a locator core.</desc>
+  <g fill="none" stroke="#000000" stroke-linecap="round" stroke-width="132">
+    <path d="M 365 709 C 266 622 247 474 318 371 C 390 267 529 225 647 275"/>
+    <path d="M 680 332 C 782 410 811 555 747 665 C 682 776 545 828 422 786"/>
+  </g>
+  <path d="M 512 446 L 578 512 L 512 578 L 446 512 Z" fill="#000000"/>
+</svg>

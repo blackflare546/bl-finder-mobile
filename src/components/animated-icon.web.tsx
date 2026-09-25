@@ -66,7 +66,11 @@ export function AnimatedIcon() {
       </Animated.View>
 
       <Animated.View style={styles.imageContainer} entering={logoKeyframe.duration(DURATION)}>
-        <Image style={styles.image} source={require('@/assets/images/expo-logo.png')} />
+        <Image
+          contentFit="contain"
+          style={styles.image}
+          source={require('@/assets/brand/bluetooth-finder-icon-1024.png')}
+        />
       </Animated.View>
     </View>
   );
@@ -97,8 +101,8 @@ const styles = StyleSheet.create({
   },
   image: {
     position: 'absolute',
-    width: 76,
-    height: 71,
+    width: 96,
+    height: 96,
   },
   background: {
     width: 128,

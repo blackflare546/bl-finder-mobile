@@ -5,15 +5,13 @@
     "version": "1.0.0",
     "platforms": ["android"],
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/brand/bluetooth-finder-icon-1024.png",
     "scheme": "blfindermobile",
     "userInterfaceStyle": "automatic",
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#071B2B",
+        "foregroundImage": "./assets/brand/bluetooth-finder-icon-1024.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.bluetoothfinder.mobile"
@@ -23,9 +21,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#071B2B",
+          "image": "./assets/brand/bluetooth-finder-icon-1024.png",
+          "imageWidth": 180
         }
       ],
       [
