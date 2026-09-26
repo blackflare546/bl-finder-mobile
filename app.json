@@ -1,9 +1,11 @@
 {
   "expo": {
     "name": "Bluetooth Finder",
-    "slug": "bl-finder-mobile",
+    "slug": "bluetooth-5-finder",
     "version": "1.0.0",
-    "platforms": ["android"],
+    "platforms": [
+      "android"
+    ],
     "orientation": "portrait",
     "icon": "./assets/brand/bluetooth-finder-icon-1024.png",
     "scheme": "blfindermobile",
@@ -14,7 +16,12 @@
         "foregroundImage": "./assets/brand/bluetooth-finder-icon-1024.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.bluetoothfinder.mobile"
+      "package": "com.bluetoothfinder.mobile",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -38,6 +45,19 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "40702590-5a29-4e4f-909d-fa99b3d0e922"
+      }
+    },
+    "owner": "blackflare546s-team",
+    "ios": {
+      "bundleIdentifier": "com.bluetoothfinder.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     }
   }
 }
