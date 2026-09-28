@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { PermissionsAndroid, Platform } from 'react-native';
+import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import BleManager, { BleScanMode, BleState, type Peripheral } from 'react-native-ble-manager';
 
 export type BluetoothDevice = {
@@ -27,6 +27,7 @@ type BluetoothContextValue = {
   error: string | null;
   hasScanned: boolean;
   isScanning: boolean;
+  isRequestingEnable: boolean;
   permissionState: PermissionState;
   enableBluetooth: () => Promise<void>;
   startScan: (clearExisting?: boolean) => Promise<void>;
@@ -42,6 +43,11 @@ function friendlyError(error: unknown) {
   return message || 'Bluetooth scanning failed. Please try again.';
 }
 
+function isEnableDeclined(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /refused|rejected|cancel/i.test(message);
+}
+
 export function BluetoothProvider({ children }: PropsWithChildren) {
   const [adapterState, setAdapterState] = useState<BleState | 'initializing'>('initializing');
   const [devicesById, setDevicesById] = useState<Map<string, BluetoothDevice>>(() => new Map());
@@ -50,6 +56,7 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
   );
   const [hasScanned, setHasScanned] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isRequestingEnable, setIsRequestingEnable] = useState(false);
   const [permissionState, setPermissionState] = useState<PermissionState>('unknown');
   const mountedRef = useRef(true);
 
@@ -62,7 +69,13 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
     const stateListener = BleManager.onDidUpdateState(({ state }) => {
       if (!mountedRef.current) return;
       setAdapterState(state);
-      if (state !== BleState.On) setIsScanning(false);
+      if (state === BleState.On) {
+        setError((current) =>
+          current && /bluetooth.*off|turn on bluetooth/i.test(current) ? null : current,
+        );
+      } else {
+        setIsScanning(false);
+      }
     });
     const deviceListener = BleManager.onDiscoverPeripheral((peripheral: Peripheral) => {
       if (!mountedRef.current || !Number.isFinite(peripheral.rssi)) return;
@@ -92,11 +105,19 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
       .then((state) => mountedRef.current && setAdapterState(state))
       .catch((reason) => mountedRef.current && setError(friendlyError(reason)));
 
+    const appStateListener = AppState.addEventListener('change', (state) => {
+      if (state !== 'active' || !mountedRef.current) return;
+      void BleManager.checkState()
+        .then((nextState) => mountedRef.current && setAdapterState(nextState))
+        .catch((reason) => mountedRef.current && setError(friendlyError(reason)));
+    });
+
     return () => {
       mountedRef.current = false;
       stateListener.remove();
       deviceListener.remove();
       stopListener.remove();
+      appStateListener.remove();
       void BleManager.stopScan().catch(() => undefined);
     };
   }, []);
@@ -118,6 +139,12 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
     return granted;
   }, []);
 
+  const refreshAdapterState = useCallback(async () => {
+    const state = await BleManager.checkState();
+    if (mountedRef.current) setAdapterState(state);
+    return state;
+  }, []);
+
   const startScan = useCallback(
     async (clearExisting = true) => {
       if (process.env.EXPO_OS !== 'android') return;
@@ -131,8 +158,7 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
           return;
         }
 
-        const state = await BleManager.checkState();
-        setAdapterState(state);
+        const state = await refreshAdapterState();
         if (state !== BleState.On) {
           setError('Bluetooth is off. Turn it on, then scan again.');
           return;
@@ -154,7 +180,7 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
         }
       }
     },
-    [permissionState, requestPermissions],
+    [permissionState, refreshAdapterState, requestPermissions],
   );
 
   const stopScan = useCallback(async () => {
@@ -168,15 +194,30 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
   }, []);
 
   const enableBluetooth = useCallback(async () => {
+    if (isRequestingEnable || process.env.EXPO_OS !== 'android') return;
+    setIsRequestingEnable(true);
     try {
       setError(null);
+      if (Number(Platform.Version) >= 31) {
+        const granted = permissionState === 'granted' || (await requestPermissions());
+        if (!granted) {
+          setError('Nearby devices permission is required before Android can turn on Bluetooth.');
+          return;
+        }
+      }
+
+      const state = await refreshAdapterState();
+      if (state === BleState.On) return;
+
       await BleManager.enableBluetooth();
-      const state = await BleManager.checkState();
-      setAdapterState(state);
+      await refreshAdapterState();
     } catch (reason) {
-      setError(friendlyError(reason));
+      await refreshAdapterState().catch(() => undefined);
+      if (!isEnableDeclined(reason)) setError(friendlyError(reason));
+    } finally {
+      if (mountedRef.current) setIsRequestingEnable(false);
     }
-  }, []);
+  }, [isRequestingEnable, permissionState, refreshAdapterState, requestPermissions]);
 
   const value = useMemo<BluetoothContextValue>(
     () => ({
@@ -185,12 +226,13 @@ export function BluetoothProvider({ children }: PropsWithChildren) {
       error,
       hasScanned,
       isScanning,
+      isRequestingEnable,
       permissionState,
       enableBluetooth,
       startScan,
       stopScan,
     }),
-    [adapterState, devicesById, enableBluetooth, error, hasScanned, isScanning, permissionState, startScan, stopScan],
+    [adapterState, devicesById, enableBluetooth, error, hasScanned, isRequestingEnable, isScanning, permissionState, startScan, stopScan],
   );
 
   return <BluetoothContext.Provider value={value}>{children}</BluetoothContext.Provider>;

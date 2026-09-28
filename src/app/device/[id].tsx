@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { useBluetooth } from '@/services/bluetooth-provider';
 import {
   finderSignalReducer,
-  getSignalLevel,
+  getSignalTrend,
   INITIAL_FINDER_SIGNAL_STATE,
   SIGNAL_LOSS_TIMEOUT_MS,
 } from '@/services/signal';
@@ -42,11 +42,23 @@ const DIRECTION_COPY = {
     color: '#C47718',
   },
   strongest: {
-    arrow: '↑',
-    label: 'Signal strongest in this direction',
+    arrow: '✓',
+    label: 'Strongest signal detected',
     body: 'This is the strongest rolling signal seen this session.',
     color: '#087D79',
   },
+  unstable: {
+    arrow: '≈',
+    label: 'Signal unstable — try rotating slowly',
+    body: 'Reflections or movement are causing large swings. Pause, then rotate slowly.',
+    color: '#A35D18',
+  },
+} as const;
+
+const TREND_COPY = {
+  stronger: 'Getting stronger ↑',
+  stable: 'Stable →',
+  weaker: 'Getting weaker ↓',
 } as const;
 
 export default function DeviceFinderScreen() {
@@ -77,8 +89,10 @@ export default function DeviceFinderScreen() {
     dispatchSignal({ type: 'sample', rssi: device.rssi });
   }, [device?.lastSeen, device?.rssi, device]);
 
-  const smoothedRssi = signalState.smoothedRssi ?? device?.rssi ?? null;
-  const signal = smoothedRssi === null ? null : getSignalLevel(smoothedRssi);
+  const rawRssi = signalState.rawRssi ?? device?.rssi ?? null;
+  const smoothedRssi = signalState.smoothedRssi;
+  const signal = signalState.signalLevel;
+  const trend = getSignalTrend(signalState.readings);
   const direction = DIRECTION_COPY[signalState.direction.status];
   const temporarilyLost = !device || clock - device.lastSeen > SIGNAL_LOSS_TIMEOUT_MS;
   const roundedRssi = smoothedRssi === null ? '—' : Math.round(smoothedRssi);
@@ -134,6 +148,30 @@ export default function DeviceFinderScreen() {
               <View key={bar} style={[styles.meterSegment, { backgroundColor: bar <= bars ? signal?.color : '#DFE7E9' }]} />
             ))}
           </View>
+          <View style={styles.readingGrid}>
+            <View style={styles.readingItem}>
+              <Text selectable style={styles.readingLabel}>RAW RSSI</Text>
+              <Text selectable style={styles.readingValue}>
+                {rawRssi === null ? '—' : `${Math.round(rawRssi)} dBm`}
+              </Text>
+            </View>
+            <View style={styles.readingDivider} />
+            <View style={styles.readingItem}>
+              <Text selectable style={styles.readingLabel}>SMOOTHED</Text>
+              <Text selectable style={styles.readingValue}>
+                {smoothedRssi === null ? '—' : `${Math.round(smoothedRssi)} dBm`}
+              </Text>
+            </View>
+            <View style={styles.readingDivider} />
+            <View style={styles.readingItem}>
+              <Text selectable style={styles.readingLabel}>TREND</Text>
+              <Text numberOfLines={2} selectable style={styles.readingValue}>
+                {signalState.direction.status === 'unstable'
+                  ? 'Unstable ≈'
+                  : TREND_COPY[trend]}
+              </Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.directionCard}>
@@ -156,7 +194,7 @@ export default function DeviceFinderScreen() {
               (!isScanning || temporarilyLost) && styles.directionButtonDisabled,
               pressed && styles.pressed,
             ]}>
-            <Text style={styles.directionButtonText}>I changed direction ↩</Text>
+            <Text style={styles.directionButtonText}>I changed direction — recalibrate ↩</Text>
           </Pressable>
           <Text selectable style={styles.directionFootnote}>
             Compares recent signal strength only—not an angle, bearing, or exact location.
@@ -210,6 +248,11 @@ const styles = StyleSheet.create({
   levelLabel: { fontSize: 23, fontWeight: '900', letterSpacing: -0.4, textAlign: 'center', width: '100%' },
   meter: { flexDirection: 'row', gap: 5, width: '84%' },
   meterSegment: { borderRadius: 4, flex: 1, height: 7 },
+  readingGrid: { alignItems: 'stretch', backgroundColor: '#F2F7F9', borderRadius: 14, flexDirection: 'row', marginTop: 2, paddingVertical: 11, width: '100%' },
+  readingItem: { alignItems: 'center', flex: 1, gap: 4, justifyContent: 'center', paddingHorizontal: 5 },
+  readingDivider: { backgroundColor: '#DCE7EA', width: 1 },
+  readingLabel: { color: '#73858D', fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
+  readingValue: { color: '#173642', fontSize: 11, fontVariant: ['tabular-nums'], fontWeight: '800', textAlign: 'center' },
   directionCard: { backgroundColor: '#FFFFFF', borderColor: '#DCE7EA', borderRadius: 20, borderWidth: 1, gap: 13, padding: 16 },
   directionOverline: { color: '#60727E', fontSize: 10, fontWeight: '900', letterSpacing: 1.1 },
   directionSummary: { alignItems: 'center', flexDirection: 'row', gap: 14 },

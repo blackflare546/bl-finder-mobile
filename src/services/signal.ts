@@ -1,13 +1,22 @@
 export const SIGNAL_LOSS_TIMEOUT_MS = 7_000;
 export const TREND_TOLERANCE_DBM = 3;
-export const RSSI_SMOOTHING_ALPHA = 0.28;
-export const DIRECTION_WINDOW_SIZE = 3;
-export const DIRECTION_CONFIRMATION_SAMPLES = 2;
-export const BEST_DIRECTION_TOLERANCE_DBM = 1;
-export const TRY_ANOTHER_DIRECTION_GAP_DBM = 4;
+export const RSSI_SMOOTHING_ALPHA = 0.24;
+export const MEDIAN_WINDOW_SIZE = 5;
+export const RAW_HISTORY_SIZE = 24;
+export const SMOOTHED_HISTORY_SIZE = 24;
+export const DIRECTION_WINDOW_SIZE = 4;
+export const DIRECTION_CONFIRMATION_SAMPLES = 3;
+export const STRONGEST_IMPROVEMENT_DBM = 2;
+export const TRY_ANOTHER_DIRECTION_GAP_DBM = 5;
+export const SIGNAL_LEVEL_HYSTERESIS_DBM = 2;
+export const UNSTABLE_WINDOW_SIZE = 7;
+export const UNSTABLE_RANGE_DBM = 18;
+export const UNSTABLE_MEDIAN_DEVIATION_DBM = 4;
+
+export type SignalLevelLabel = 'Very Close' | 'Close' | 'Nearby' | 'Weak' | 'Very Weak';
 
 export type SignalLevel = {
-  label: 'Very Close' | 'Close' | 'Nearby' | 'Weak' | 'Very Weak';
+  label: SignalLevelLabel;
   color: string;
   progress: number;
 };
@@ -19,7 +28,8 @@ export type RelativeDirection =
   | 'weaker'
   | 'stable'
   | 'tryAnother'
-  | 'strongest';
+  | 'strongest'
+  | 'unstable';
 
 export type DirectionTracker = {
   status: RelativeDirection;
@@ -36,8 +46,13 @@ export const INITIAL_DIRECTION_TRACKER: DirectionTracker = {
 };
 
 export type FinderSignalState = {
+  rawReadings: number[];
+  filteredReadings: number[];
   readings: number[];
+  rawRssi: number | null;
+  filteredRssi: number | null;
   smoothedRssi: number | null;
+  signalLevel: SignalLevel | null;
   direction: DirectionTracker;
 };
 
@@ -46,32 +61,69 @@ export type FinderSignalAction =
   | { type: 'changedDirection' };
 
 export const INITIAL_FINDER_SIGNAL_STATE: FinderSignalState = {
+  rawReadings: [],
+  filteredReadings: [],
   readings: [],
+  rawRssi: null,
+  filteredRssi: null,
   smoothedRssi: null,
+  signalLevel: null,
   direction: INITIAL_DIRECTION_TRACKER,
 };
+
+const SIGNAL_LEVELS: (SignalLevel & { minimum: number })[] = [
+  { label: 'Very Close', color: '#16A36A', progress: 1, minimum: -55 },
+  { label: 'Close', color: '#35B46F', progress: 0.8, minimum: -65 },
+  { label: 'Nearby', color: '#E9A23B', progress: 0.6, minimum: -75 },
+  { label: 'Weak', color: '#E36F3D', progress: 0.4, minimum: -85 },
+  { label: 'Very Weak', color: '#D04C4C', progress: 0.2, minimum: Number.NEGATIVE_INFINITY },
+];
+
+export function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+export function filterRssiSample(recentRawReadings: number[], next: number): number {
+  const window = [...recentRawReadings.slice(-(MEDIAN_WINDOW_SIZE - 1)), next];
+  return window.length < 3 ? next : median(window);
+}
 
 export function smoothRssi(previous: number | null, next: number): number {
   if (previous === null) return next;
   return previous + RSSI_SMOOTHING_ALPHA * (next - previous);
 }
 
-export function getSignalLevel(rssi: number): SignalLevel {
-  if (rssi >= -55) return { label: 'Very Close', color: '#16A36A', progress: 1 };
-  if (rssi >= -65) return { label: 'Close', color: '#35B46F', progress: 0.8 };
-  if (rssi >= -75) return { label: 'Nearby', color: '#E9A23B', progress: 0.6 };
-  if (rssi >= -85) return { label: 'Weak', color: '#E36F3D', progress: 0.4 };
-  return { label: 'Very Weak', color: '#D04C4C', progress: 0.2 };
+export function getSignalLevel(
+  rssi: number,
+  previousLabel?: SignalLevelLabel,
+): SignalLevel {
+  const candidateIndex = SIGNAL_LEVELS.findIndex((level) => rssi >= level.minimum);
+  const candidate = SIGNAL_LEVELS[candidateIndex];
+  if (!previousLabel) return candidate;
+
+  const previousIndex = SIGNAL_LEVELS.findIndex((level) => level.label === previousLabel);
+  if (previousIndex < 0 || candidateIndex === previousIndex) return candidate;
+
+  if (candidateIndex < previousIndex) {
+    const strongerBoundary = SIGNAL_LEVELS[candidateIndex].minimum + SIGNAL_LEVEL_HYSTERESIS_DBM;
+    return rssi >= strongerBoundary ? candidate : SIGNAL_LEVELS[previousIndex];
+  }
+
+  const weakerBoundary = SIGNAL_LEVELS[previousIndex].minimum - SIGNAL_LEVEL_HYSTERESIS_DBM;
+  return rssi < weakerBoundary ? candidate : SIGNAL_LEVELS[previousIndex];
 }
 
 export function getSignalTrend(readings: number[]): SignalTrend {
-  if (readings.length < 4) return 'stable';
+  if (readings.length < DIRECTION_WINDOW_SIZE * 2) return 'stable';
 
-  const recent = readings.slice(-2);
-  const prior = readings.slice(-4, -2);
-  const recentAverage = recent.reduce((sum, value) => sum + value, 0) / recent.length;
-  const priorAverage = prior.reduce((sum, value) => sum + value, 0) / prior.length;
-  const change = recentAverage - priorAverage;
+  const recent = readings.slice(-DIRECTION_WINDOW_SIZE);
+  const prior = readings.slice(-DIRECTION_WINDOW_SIZE * 2, -DIRECTION_WINDOW_SIZE);
+  const change = average(recent) - average(prior);
 
   if (change >= TREND_TOLERANCE_DBM) return 'stronger';
   if (change <= -TREND_TOLERANCE_DBM) return 'weaker';
@@ -82,29 +134,59 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+export function isSignalUnstable(rawReadings: number[]): boolean {
+  const recent = rawReadings.slice(-UNSTABLE_WINDOW_SIZE);
+  if (recent.length < UNSTABLE_WINDOW_SIZE) return false;
+
+  const center = median(recent);
+  const medianDeviation = median(recent.map((value) => Math.abs(value - center)));
+  const range = Math.max(...recent) - Math.min(...recent);
+  const significantDeltas = recent
+    .slice(1)
+    .map((value, index) => value - recent[index])
+    .filter((delta) => Math.abs(delta) >= TREND_TOLERANCE_DBM);
+  const directionChanges = significantDeltas.slice(1).filter(
+    (delta, index) => Math.sign(delta) !== Math.sign(significantDeltas[index]),
+  ).length;
+
+  return (
+    range >= UNSTABLE_RANGE_DBM &&
+    medianDeviation >= UNSTABLE_MEDIAN_DEVIATION_DBM &&
+    directionChanges >= 3
+  );
+}
+
 export function getDirectionCandidate(
   readings: number[],
   bestAverage: number | null,
+  unstable = false,
 ): { status: RelativeDirection; bestAverage: number | null } {
+  if (unstable) return { status: 'unstable', bestAverage };
   if (readings.length < DIRECTION_WINDOW_SIZE) {
     return { status: 'sampling', bestAverage };
   }
 
   const recentAverage = average(readings.slice(-DIRECTION_WINDOW_SIZE));
-  const nextBestAverage = bestAverage === null ? recentAverage : Math.max(bestAverage, recentAverage);
-
   if (readings.length < DIRECTION_WINDOW_SIZE * 2) {
-    return { status: 'sampling', bestAverage: nextBestAverage };
+    return {
+      status: 'sampling',
+      bestAverage: bestAverage === null ? recentAverage : Math.max(bestAverage, recentAverage),
+    };
   }
 
   const priorAverage = average(
     readings.slice(-DIRECTION_WINDOW_SIZE * 2, -DIRECTION_WINDOW_SIZE),
   );
   const change = recentAverage - priorAverage;
+  const previousBest = bestAverage ?? priorAverage;
+  const nextBestAverage = Math.max(previousBest, recentAverage);
 
   if (change >= TREND_TOLERANCE_DBM) {
-    const atSessionBest = recentAverage >= nextBestAverage - BEST_DIRECTION_TOLERANCE_DBM;
-    return { status: atSessionBest ? 'strongest' : 'stronger', bestAverage: nextBestAverage };
+    const isNewStrongest = recentAverage >= previousBest + STRONGEST_IMPROVEMENT_DBM;
+    return {
+      status: isNewStrongest ? 'strongest' : 'stronger',
+      bestAverage: nextBestAverage,
+    };
   }
   if (change <= -TREND_TOLERANCE_DBM) {
     return { status: 'weaker', bestAverage: nextBestAverage };
@@ -118,15 +200,22 @@ export function getDirectionCandidate(
 export function updateDirectionTracker(
   readings: number[],
   tracker: DirectionTracker,
+  unstable = false,
 ): DirectionTracker {
-  const candidate = getDirectionCandidate(readings, tracker.bestAverage);
+  const candidate = getDirectionCandidate(readings, tracker.bestAverage, unstable);
 
   if (candidate.status === 'sampling') {
-    return { ...tracker, status: 'sampling', bestAverage: candidate.bestAverage };
-  }
-  if (candidate.status === 'stable') {
     return {
-      status: 'stable',
+      ...tracker,
+      status: 'sampling',
+      pendingStatus: null,
+      pendingCount: 0,
+      bestAverage: candidate.bestAverage,
+    };
+  }
+  if (candidate.status === 'unstable') {
+    return {
+      status: 'unstable',
       pendingStatus: null,
       pendingCount: 0,
       bestAverage: candidate.bestAverage,
@@ -153,10 +242,10 @@ export function updateDirectionTracker(
 
   return {
     ...tracker,
-    status: tracker.status === 'sampling' ? 'stable' : tracker.status,
     pendingStatus: candidate.status,
     pendingCount,
-    bestAverage: candidate.bestAverage,
+    // Do not promote a candidate peak until it has passed confirmation.
+    bestAverage: tracker.bestAverage,
   };
 }
 
@@ -166,8 +255,7 @@ export function finderSignalReducer(
 ): FinderSignalState {
   if (action.type === 'changedDirection') {
     return {
-      ...state,
-      readings: [],
+      ...INITIAL_FINDER_SIGNAL_STATE,
       direction: {
         ...INITIAL_DIRECTION_TRACKER,
         bestAverage: state.direction.bestAverage,
@@ -175,11 +263,24 @@ export function finderSignalReducer(
     };
   }
 
-  const smoothedRssi = smoothRssi(state.smoothedRssi, action.rssi);
-  const readings = [...state.readings, smoothedRssi].slice(-18);
+  if (!Number.isFinite(action.rssi)) return state;
+
+  const filteredRssi = filterRssiSample(state.rawReadings, action.rssi);
+  const smoothedRssi = smoothRssi(state.smoothedRssi, filteredRssi);
+  const rawReadings = [...state.rawReadings, action.rssi].slice(-RAW_HISTORY_SIZE);
+  const filteredReadings = [...state.filteredReadings, filteredRssi].slice(-RAW_HISTORY_SIZE);
+  const readings = [...state.readings, smoothedRssi].slice(-SMOOTHED_HISTORY_SIZE);
+  const unstable = isSignalUnstable(rawReadings);
+  const signalLevel = getSignalLevel(smoothedRssi, state.signalLevel?.label);
+
   return {
-    smoothedRssi,
+    rawReadings,
+    filteredReadings,
     readings,
-    direction: updateDirectionTracker(readings, state.direction),
+    rawRssi: action.rssi,
+    filteredRssi,
+    smoothedRssi,
+    signalLevel,
+    direction: updateDirectionTracker(readings, state.direction, unstable),
   };
 }

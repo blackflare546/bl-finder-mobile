@@ -9,6 +9,7 @@ Bluetooth Finder targets Android only and uses `react-native-ble-manager` 12.x w
 - `neverForLocation` is enabled because scan results are used only as a local proximity hint. The app has no GPS, maps, location storage, or background tracking.
 - BLE hardware is marked required. iOS Bluetooth permission configuration is disabled.
 - Runtime permission requests use Nearby devices on Android 12+ and fine location on Android 7–11, as required for BLE discovery on those releases.
+- On Android 12+, the app obtains Nearby devices permission before requesting Bluetooth enablement. The **Turn On Bluetooth** action calls the library's Android-only `enableBluetooth()`, which launches the system `ACTION_REQUEST_ENABLE` confirmation prompt. A decline is treated as a normal Bluetooth-off state, and adapter state is refreshed from both the native state event and app-resume checks.
 
 Changes to a native dependency or `app.json` require rebuilding the development client.
 
@@ -42,6 +43,8 @@ Some earphones and watches stop advertising while connected to another phone, as
 
 ## Relative direction guidance
 
-The finder compares two rolling windows of three smoothed RSSI readings. A change must exceed a 3 dBm deadband and persist for two evaluations before non-stable guidance is shown. The strongest rolling average is retained across direction checks, allowing the UI to indicate when the current direction matches the best signal observed in the session.
+The finder keeps separate raw, median-filtered, and exponentially smoothed RSSI values. A five-sample median filter suppresses isolated spikes before a 0.24-alpha exponential moving average is applied. Signal-level boundaries use a 2 dBm hysteresis band, so labels do not bounce when readings sit near a threshold.
+
+Relative guidance compares two rolling windows of four smoothed readings. A change must exceed a 3 dBm deadband and persist for three evaluations before guidance changes. The strongest stable rolling average is retained across explicit **I changed direction — recalibrate** checks. Large, repeatedly reversing raw swings produce **Signal unstable — try rotating slowly** instead of directional advice.
 
 This is only a hotter/colder comparison. It cannot determine an angle, compass bearing, exact direction, distance, or location. Reflections, walls, obstacles, body position, radio power, and device orientation can all change RSSI independently of distance.

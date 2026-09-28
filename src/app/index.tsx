@@ -47,7 +47,7 @@ function DeviceRow({ device, onPress }: { device: BluetoothDevice; onPress: () =
 }
 
 export default function ScannerScreen() {
-  const { adapterState, devices, enableBluetooth, error, hasScanned, isScanning, permissionState, startScan, stopScan } = useBluetooth();
+  const { adapterState, devices, enableBluetooth, error, hasScanned, isRequestingEnable, isScanning, permissionState, startScan, stopScan } = useBluetooth();
 
   const openDevice = useCallback((device: BluetoothDevice) => {
     router.push(
@@ -88,8 +88,16 @@ export default function ScannerScreen() {
                   <Text selectable style={styles.noticeTitle}>Bluetooth is off</Text>
                   <Text selectable style={styles.noticeBody}>Turn it on to discover nearby devices.</Text>
                 </View>
-                <Pressable onPress={() => void enableBluetooth()} style={styles.noticeButton}>
-                  <Text style={styles.noticeButtonText}>Turn on</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isRequestingEnable}
+                  onPress={() => void enableBluetooth()}
+                  style={[styles.noticeButton, isRequestingEnable && styles.disabledButton]}>
+                  {isRequestingEnable ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.noticeButtonText}>Turn On Bluetooth</Text>
+                  )}
                 </Pressable>
               </View>
             ) : null}
@@ -113,9 +121,9 @@ export default function ScannerScreen() {
             <View style={styles.actions}>
               <Pressable
                 accessibilityRole="button"
-                disabled={isScanning || adapterState === 'initializing'}
+                disabled={isScanning || adapterState === 'initializing' || bluetoothOff}
                 onPress={() => void startScan(true)}
-                style={({ pressed }) => [styles.primaryButton, (isScanning || adapterState === 'initializing') && styles.disabledButton, pressed && styles.pressed]}>
+                style={({ pressed }) => [styles.primaryButton, (isScanning || adapterState === 'initializing' || bluetoothOff) && styles.disabledButton, pressed && styles.pressed]}>
                 {isScanning ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.scanGlyph}>⌁</Text>}
                 <Text style={styles.primaryButtonText}>{isScanning ? 'Scanning…' : hasScanned ? 'Rescan' : 'Scan nearby'}</Text>
               </Pressable>
